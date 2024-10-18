@@ -7,7 +7,7 @@ Yaml file is the ‘environment.yaml‘ in curent content
 
 ```sh
 conda activate ME5418-group23
-cd rsl_rl && pip install -e .
+cd rsl_rl-1.0.2 && pip install -e .
 cd .. 
 cd isaacgym/python && pip install -e .
 cd .. 
