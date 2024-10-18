@@ -22,7 +22,7 @@ cd ..
 conda activate legged_robot_parkour
 cd legged_gym/legged_gym/tests
 
-python test_env.py
+python test_env.py --num_envs=1
 ```
 
 If there has error:
