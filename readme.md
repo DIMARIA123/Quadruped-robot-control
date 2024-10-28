@@ -38,10 +38,12 @@ Currently, the environment is set up using IsaacGymEnv, and training is conducte
    ```
 IsaacGymEnv uses the Hydra library for parameter configuration, and to maintain consistency, this project also utilizes Hydra for parameter management. The top-level configuration file is located at 
 * IsaacGymEnvs/isaacgymenvs/cfg/config.yaml. 
-! Configuration files for the environment and the reinforcement learning algorithm can be found at:
+
+Configuration files for the environment and the reinforcement learning algorithm can be found at:
 * IsaacGymEnvs/isaacgymenvs/cfg/task/Go2.yaml
 * IsaacGymEnvs/isaacgymenvs/cfg/train/Go2PPO.yaml 
-! Each configuration file includes detailed comments; for more information, please refer to the respective documentation.
+
+Each configuration file includes detailed comments; for more information, please refer to the respective documentation.
 
 ---
 
