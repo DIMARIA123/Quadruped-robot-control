@@ -15,15 +15,15 @@ ME5418 Project: Motion Control for Quadruped Robot Based on Proprioception
    conda activate ME5418_group23
    ```
  
- 3. **Install Isaacgym library**  
+3. **Install Isaacgym library**  
    ```bash
    cd isaacgym/python
    pip install -e .
    ```
    
- 4. **Install Isaacgymenvs library**  
+4. **Install Isaacgymenvs library**  
    ```bash
-   cd IsaacGymEnvs/isaacgymenvs
+   cd IsaacGymEnvs
    pip install -e .
    ```
    
@@ -33,7 +33,7 @@ ME5418 Project: Motion Control for Quadruped Robot Based on Proprioception
 
 Currently, the environment is set up using IsaacGymEnv, and training is conducted with the built-in PPO algorithm from the rl-game library, which supports the asymmetric actor-critic variant. The training can be run with the following command:
    ```bash
-   cd IsaacGymEnvs
+   cd IsaacGymEnvs/isaacgymenvs
    python train.py
    ```
 IsaacGymEnv uses the Hydra library for parameter configuration, and to maintain consistency, this project also utilizes Hydra for parameter management. The top-level configuration file is located at 
