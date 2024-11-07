@@ -31,7 +31,7 @@ ME5418 Project: Motion Control for Quadruped Robot Based on Proprioception
 
 ## Training
 
-The current environment is set up using IsaacGymEnv, and training is conducted with the built-in A2C algorithm from the rl-game library, which supports the continuous action space variant of A2C. The specific configuration is as follows:
+The current environment is set up using IsaacGymEnv, and training is conducted with the A2C algorithm, which supports the continuous action space variant of A2C. The specific configuration is as follows:
 * Reinforcement Learning Algorithm: a2c_continuous
 * Model: continuous_a2c_logstd
 * Network Architecture: actor_critic
