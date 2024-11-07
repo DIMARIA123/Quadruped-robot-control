@@ -48,7 +48,7 @@ Configuration files for the environment and the reinforcement learning algorithm
 * IsaacGymEnvs/isaacgymenvs/cfg/task/Go2.yaml
 * IsaacGymEnvs/isaacgymenvs/cfg/train/Go2PPO.yaml 
 
-Each configuration file includes detailed comments; for more information, please refer to the respective documentation.
+If you want to modify configuration parameters, please edit the corresponding configuration file directly. Alternatively, you can override parameters by adding them as arguments when running python train.py --parameter_name value (although I personally do not recommend this approach).
 
 ---
 
