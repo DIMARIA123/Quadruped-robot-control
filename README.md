@@ -31,7 +31,12 @@ ME5418 Project: Motion Control for Quadruped Robot Based on Proprioception
 
 ## Training
 
-Currently, the environment is set up using IsaacGymEnv, and training is conducted with the built-in PPO algorithm from the rl-game library, which supports the asymmetric actor-critic variant. The training can be run with the following command:
+The current environment is set up using IsaacGymEnv, and training is conducted with the built-in A2C algorithm from the rl-game library, which supports the continuous action space variant of A2C. The specific configuration is as follows:
+* Reinforcement Learning Algorithm: a2c_continuous
+* Model: continuous_a2c_logstd
+* Network Architecture: actor_critic
+
+The training can be run with the following command:
    ```bash
    cd IsaacGymEnvs/isaacgymenvs
    python train.py
