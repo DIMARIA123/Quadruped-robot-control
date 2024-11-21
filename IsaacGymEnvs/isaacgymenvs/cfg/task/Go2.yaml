@@ -7,6 +7,8 @@ physics_engine: ${..physics_engine}
 env:
   numEnvs: ${resolve_default:512,${...num_envs}}
   envSpacing: 4.  # Spacing between environment instances, set to 4 meters [m]
+  numActions: 12
+  numObservations: 48 
 
   # Maximum values for observations and actions
   clipObservations: 5.0
@@ -64,10 +66,24 @@ env:
 
   # Learning Configuration
   learn:
+    allowKneeContacts: true
     # rewards
+    terminalReward: 0.0
     linearVelocityXYRewardScale: 1.0
+    linearVelocityZRewardScale: -4.0
+    angularVelocityXYRewardScale: -0.05
     angularVelocityZRewardScale: 0.5
-    torqueRewardScale: -0.000025 
+    orientationRewardScale: -0. #-1.
+    torqueRewardScale: -0.00002 # -0.000025
+    jointAccRewardScale: -0.0005 # -0.0025
+    baseHeightRewardScale: -0.0 #5
+    feetAirTimeRewardScale:  1.0
+    kneeCollisionRewardScale: -0.25 
+    feetStumbleRewardScale: -0. #-2.0
+    actionRateRewardScale: -0.01
+
+    # cosmetics
+    hipRewardScale: -0. #25
 
     # normalization
     linearVelocityScale: 2.0

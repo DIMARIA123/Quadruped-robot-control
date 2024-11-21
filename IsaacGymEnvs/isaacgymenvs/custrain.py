@@ -31,7 +31,7 @@ from rl_games.algos_torch import network_builder
 from rl_games.algos_torch import models
 
 @hydra.main(version_base="1.1", config_name="cusconfig", config_path="./cfg")
-def launch_rlg_hydra(cfg: DictConfig):
+def test(cfg: DictConfig):
 
     time_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     run_name = f"train_{time_str}"
@@ -107,4 +107,4 @@ def launch_rlg_hydra(cfg: DictConfig):
 
 
 if __name__ == "__main__":
-    launch_rlg_hydra()
+    test()
