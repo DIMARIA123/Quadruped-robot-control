@@ -31,19 +31,24 @@ ME5418 Project: Motion Control for Quadruped Robot Based on Proprioception
 
 ## Training
 
-Currently, the environment is set up using IsaacGymEnv, and training is conducted with the built-in PPO algorithm from the rl-game library, which supports the asymmetric actor-critic variant. The training can be run with the following command:
+The current environment is set up using IsaacGymEnv, and training is conducted with the A2C algorithm, which supports the continuous action space variant of A2C. The specific configuration is as follows:
+* Reinforcement Learning Algorithm: a2c_continuous
+* Model: continuous_a2c_logstd
+* Network Architecture: actor_critic
+
+The training can be run with the following command:
    ```bash
    cd IsaacGymEnvs/isaacgymenvs
-   python train.py
+   python custrain.py
    ```
 IsaacGymEnv uses the Hydra library for parameter configuration, and to maintain consistency, this project also utilizes Hydra for parameter management. The top-level configuration file is located at 
-* IsaacGymEnvs/isaacgymenvs/cfg/config.yaml. 
+* IsaacGymEnvs/isaacgymenvs/cfg/cusconfig.yaml. 
 
 Configuration files for the environment and the reinforcement learning algorithm can be found at:
 * IsaacGymEnvs/isaacgymenvs/cfg/task/Go2.yaml
 * IsaacGymEnvs/isaacgymenvs/cfg/train/Go2PPO.yaml 
 
-Each configuration file includes detailed comments; for more information, please refer to the respective documentation.
+If you want to modify configuration parameters, please edit the corresponding configuration file directly. Alternatively, you can override parameters by adding them as arguments when running python train.py --parameter_name value (although I personally do not recommend this approach).
 
 ---
 
