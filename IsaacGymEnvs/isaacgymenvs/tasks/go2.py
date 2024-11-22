@@ -2,14 +2,10 @@ import numpy as np
 import os
 import torch
 
-from isaacgym import gymtorch
-from isaacgym import gymapi
+from isaacgym import gymtorch, gymapi, terrain_utils
 
 from isaacgymenvs.utils.torch_jit_utils import to_torch, get_axis_params, torch_rand_float, quat_rotate, quat_rotate_inverse
 from isaacgymenvs.tasks.base.vec_task import VecTask
-
-from typing import Tuple, Dict
-
 
 class Go2(VecTask):
 
@@ -25,15 +21,10 @@ class Go2(VecTask):
         state = pos + rot + v_lin + v_ang
         self.base_init_state = state
 
-        # default joint positions
-        self.named_default_joint_angles = self.cfg["env"]["defaultJointAngles"]
-        
-        # randomization
-        self.randomization_params = self.cfg["task"]["randomization_params"]
-        self.randomize = self.cfg["task"]["randomize"]
-
         super().__init__(config=self.cfg, rl_device=rl_device, sim_device=sim_device, graphics_device_id=graphics_device_id, headless=headless, virtual_screen_capture=virtual_screen_capture, force_render=force_render)
-
+        
+        self.last_contacts = torch.zeros(self.num_envs, len(self.feet_indices), dtype=torch.bool, device=self.device, requires_grad=False)
+        
         # normalization
         self.lin_vel_scale = self.cfg["env"]["learn"]["linearVelocityScale"]
         self.ang_vel_scale = self.cfg["env"]["learn"]["angularVelocityScale"]
@@ -73,13 +64,6 @@ class Go2(VecTask):
         
         for key in self.rew_scales.keys():
             self.rew_scales[key] *= self.dt
-
-        if self.viewer != None:
-            p = self.cfg["env"]["viewer"]["pos"]
-            lookat = self.cfg["env"]["viewer"]["lookat"]
-            cam_pos = gymapi.Vec3(p[0], p[1], p[2])
-            cam_target = gymapi.Vec3(lookat[0], lookat[1], lookat[2])
-            self.gym.viewer_camera_look_at(self.viewer, None, cam_pos, cam_target)
         
         # get gym state tensors
         actor_root_state = self.gym.acquire_actor_root_state_tensor(self.sim)
@@ -95,10 +79,10 @@ class Go2(VecTask):
         # create some wrapper tensors for different slices
         self.root_states = gymtorch.wrap_tensor(actor_root_state)
         self.dof_state = gymtorch.wrap_tensor(dof_state_tensor)
-        self.dof_pos = self.dof_state.view(self.num_envs, self.num_dof, 2)[..., 0]
-        self.dof_vel = self.dof_state.view(self.num_envs, self.num_dof, 2)[..., 1]
-        self.contact_forces = gymtorch.wrap_tensor(net_contact_forces).view(self.num_envs, -1, 3)  # shape: num_envs, num_bodies, xyz axis
-        self.torques = gymtorch.wrap_tensor(torques).view(self.num_envs, self.num_dof)
+        self.contact_forces = gymtorch.wrap_tensor(net_contact_forces).view(self.num_envs, -1, 3) 
+        self.torques = gymtorch.wrap_tensor(torques).view(self.num_envs, self.num_dofs)
+        self.dof_pos = self.dof_state.view(self.num_envs, self.num_dofs, 2)[..., 0]
+        self.dof_vel = self.dof_state.view(self.num_envs, self.num_dofs, 2)[..., 1]
 
         self.last_actions = torch.zeros(self.num_envs, self.num_actions, dtype=torch.float, device=self.device, requires_grad=False)
         self.feet_air_time = torch.zeros(self.num_envs, 4, dtype=torch.float, device=self.device, requires_grad=False)
@@ -112,11 +96,12 @@ class Go2(VecTask):
 
         for i in range(self.cfg["env"]["numActions"]):
             name = self.dof_names[i]
-            angle = self.named_default_joint_angles[name]
+            angle = self.cfg["env"]["defaultJointAngles"][name]
             self.default_dof_pos[:, i] = angle
 
         # initialize some data used later on
         self.extras = {}
+
         self.initial_root_states = self.root_states.clone()
         self.initial_root_states[:] = to_torch(self.base_init_state, device=self.device, requires_grad=False)
         self.gravity_vec = to_torch(get_axis_params(-1., self.up_axis_idx), device=self.device).repeat((self.num_envs, 1))
@@ -131,16 +116,18 @@ class Go2(VecTask):
         self._create_ground_plane()
         self._create_envs(self.num_envs, self.cfg["env"]['envSpacing'], int(np.sqrt(self.num_envs)))
 
-        # If randomizing, apply once immediately on startup before the fist sim step set false
-        if self.randomize:
-            self.apply_randomizations(self.randomization_params)
-
     def pre_physics_step(self, actions):
         self.actions = actions.clone().to(self.device)
-        targets = self.action_scale * self.actions + self.default_dof_pos
-        self.gym.set_dof_position_target_tensor(self.sim, gymtorch.unwrap_tensor(targets))
+        actions_scaled = actions * 0.25
+        self.action_torques = 50.*(actions_scaled + self.default_dof_pos - self.dof_pos) - 2.*self.dof_vel
+        self.gym.set_dof_actuation_force_tensor(self.sim, gymtorch.unwrap_tensor(self.action_torques))
 
     def post_physics_step(self):
+
+        self.gym.refresh_dof_state_tensor(self.sim)
+        self.gym.refresh_actor_root_state_tensor(self.sim)
+        self.gym.refresh_net_contact_force_tensor(self.sim)
+        self.gym.refresh_dof_force_tensor(self.sim)
         self.progress_buf += 1
 
         # prepare quantities
@@ -168,6 +155,7 @@ class Go2(VecTask):
         self.gym.add_ground(self.sim, plane_params)
 
     def _create_envs(self, num_envs, spacing, num_per_row):
+
         asset_root = os.path.join(os.path.dirname(os.path.abspath(__file__)), '../../assets')
         asset_file = "urdf/go2/urdf/go2.urdf"
 
@@ -185,107 +173,135 @@ class Go2(VecTask):
         asset_options.disable_gravity = False
 
         go2_asset = self.gym.load_asset(self.sim, asset_root, asset_file, asset_options)
-        self.num_dof = self.gym.get_asset_dof_count(go2_asset)
-        self.num_bodies = self.gym.get_asset_rigid_body_count(go2_asset)
-
-        start_pose = gymapi.Transform()
-        start_pose.p = gymapi.Vec3(*self.base_init_state[:3])
-
         body_names = self.gym.get_asset_rigid_body_names(go2_asset)
         self.dof_names = self.gym.get_asset_dof_names(go2_asset)
-        extremity_name = "SHANK" if asset_options.collapse_fixed_joints else "FOOT"
-        feet_names = [s for s in body_names if extremity_name in s]
-        self.feet_indices = torch.zeros(len(feet_names), dtype=torch.long, device=self.device, requires_grad=False)
-        knee_names = [s for s in body_names if "THIGH" in s]
-        self.knee_indices = torch.zeros(len(knee_names), dtype=torch.long, device=self.device, requires_grad=False)
-        self.base_index = 0
-
         dof_props = self.gym.get_asset_dof_properties(go2_asset)
-        for i in range(self.num_dof):
+        rigid_shape_props_asset = self.gym.get_asset_rigid_shape_properties(go2_asset)
+        self.num_bodies = len(body_names)
+        self.num_dofs = len(self.dof_names)
+        feet_names = [s for s in body_names if "foot" in s]
+        self.feet_indices = torch.zeros(len(feet_names), dtype=torch.long, device=self.device, requires_grad=False)
+
+
+        for i in range(self.num_dofs):
             dof_props['driveMode'][i] = gymapi.DOF_MODE_POS
             dof_props['stiffness'][i] = self.cfg["env"]["control"]["stiffness"] #self.Kp
             dof_props['damping'][i] = self.cfg["env"]["control"]["damping"] #self.Kd
+        
 
-        env_lower = gymapi.Vec3(-spacing, -spacing, 0.0)
+        self.dof_pos_limits = torch.zeros(self.num_dofs, 2, dtype=torch.float, device=self.device, requires_grad=False)
+        self.dof_vel_limits = torch.zeros(self.num_dofs, dtype=torch.float, device=self.device, requires_grad=False)
+        self.torque_limits = torch.zeros(self.num_dofs, dtype=torch.float, device=self.device, requires_grad=False)
+
+        for i in range(len(dof_props)):
+            self.dof_pos_limits[i, 0] = dof_props["lower"][i].item()
+            self.dof_pos_limits[i, 1] = dof_props["upper"][i].item()
+            self.dof_vel_limits[i] = dof_props["velocity"][i].item()
+            self.torque_limits[i] = dof_props["effort"][i].item()
+
+        start_pose = gymapi.Transform()
+        start_pose.p = gymapi.Vec3(*self.base_init_state[:3])
+        self.env_origins = torch.zeros(self.num_envs, 3, device=self.device, requires_grad=False)
+        # create a grid of robots
+        num_cols = np.floor(np.sqrt(self.num_envs))
+        num_rows = np.ceil(self.num_envs / num_cols)
+        xx, yy = torch.meshgrid(torch.arange(num_rows), torch.arange(num_cols))
+        self.env_origins[:, 0] = spacing * xx.flatten()[:self.num_envs]
+        self.env_origins[:, 1] = spacing * yy.flatten()[:self.num_envs]
+        self.env_origins[:, 2] = 0.
+        env_lower = gymapi.Vec3(-spacing, -spacing, 0.)
         env_upper = gymapi.Vec3(spacing, spacing, spacing)
-        self.go2_handles = []
+        self.actor_handles = []
         self.envs = []
-
         for i in range(self.num_envs):
             # create env instance
-            env_ptr = self.gym.create_env(self.sim, env_lower, env_upper, num_per_row)
-            go2_handle = self.gym.create_actor(env_ptr, go2_asset, start_pose, "go2", i, 1, 0)
-            self.gym.set_actor_dof_properties(env_ptr, go2_handle, dof_props)
-            self.gym.enable_actor_dof_force_sensors(env_ptr, go2_handle)
-            self.envs.append(env_ptr)
-            self.go2_handles.append(go2_handle)
+            env_handle = self.gym.create_env(self.sim, env_lower, env_upper, int(np.sqrt(self.num_envs)))
+            pos = self.env_origins[i].clone()
+            pos[:2] += torch_rand_float(-1., 1., (2,1), device=self.device).squeeze(1)
+            start_pose.p = gymapi.Vec3(*pos)
+                
+            self.gym.set_asset_rigid_shape_properties(go2_asset, rigid_shape_props_asset)
+            actor_handle = self.gym.create_actor(env_handle, go2_asset, start_pose, "go2", i, 0, 0)
+            self.gym.set_actor_dof_properties(env_handle, actor_handle, dof_props)
+            body_props = self.gym.get_actor_rigid_body_properties(env_handle, actor_handle)
+            self.gym.set_actor_rigid_body_properties(env_handle, actor_handle, body_props, recomputeInertia=True)
+            self.envs.append(env_handle)
+            self.actor_handles.append(actor_handle)
 
-        for i in range(len(feet_names)):
-            self.feet_indices[i] = self.gym.find_actor_rigid_body_handle(self.envs[0], self.go2_handles[0], feet_names[i])
-        for i in range(len(knee_names)):
-            self.knee_indices[i] = self.gym.find_actor_rigid_body_handle(self.envs[0], self.go2_handles[0], knee_names[i])
 
-        self.base_index = self.gym.find_actor_rigid_body_handle(self.envs[0], self.go2_handles[0], "base")
+
+        penalize_contacts_on = ["thigh", "calf"]
+        penalized_contact_names = []
+        for name in penalize_contacts_on:
+            penalized_contact_names.extend([s for s in body_names if name in s])
+        self.penalised_contact_indices = torch.zeros(len(penalized_contact_names), dtype=torch.long, device=self.device, requires_grad=False)
+        for i in range(len(penalized_contact_names)):
+            self.penalised_contact_indices[i] = self.gym.find_actor_rigid_body_handle(self.envs[0], self.actor_handles[0], penalized_contact_names[i])
+
+        termination_contact_names = []
+        for name in ["base"]:
+            termination_contact_names.extend([s for s in body_names if name in s])
+        self.termination_contact_indices = torch.zeros(len(termination_contact_names), dtype=torch.long, device=self.device, requires_grad=False)
+        for i in range(len(termination_contact_names)):
+            self.termination_contact_indices[i] = self.gym.find_actor_rigid_body_handle(self.envs[0], self.actor_handles[0], termination_contact_names[i])
 
     # functions called in the post_physics_step function
     def check_termination(self):
-        self.reset_buf = torch.norm(self.contact_forces[:, self.base_index, :], dim=1) > 1. # shape (nums_envs,)
-        if not self.allow_knee_contacts:
-            knee_contact = torch.norm(self.contact_forces[:, self.knee_indices, :], dim=2) > 1. # shape (nums_envs,)
-            self.reset_buf |= torch.any(knee_contact, dim=1)
+        """ Check if environments need to be reset
+        """
+        self.reset_buf = torch.any(torch.norm(self.contact_forces[:, self.termination_contact_indices, :], dim=-1) > 1., dim=1)
+        self.time_out_buf = self.progress_buf > self.max_episode_length # no terminal reward for time-outs
+        self.reset_buf |= self.time_out_buf
 
-        self.reset_buf = torch.where(self.progress_buf >= self.max_episode_length - 1, torch.ones_like(self.reset_buf), self.reset_buf)
+        base_z = self.root_states[:, 2]
+        z_threshold_buff = base_z < .1
+        self.reset_buf |= z_threshold_buff
 
     def compute_reward(self):
-        # velocity tracking reward
+
+        self.rew_buf[:] = 0.
+        reward_lin_vel_z = torch.square(self.base_lin_vel[:, 2]) * -0.01 * self.dt
+        reward_ang_vel_xy = torch.sum(torch.square(self.base_ang_vel[:, :2]), dim=1) * -0.01 * self.dt
+        reward_orientation = torch.sum(torch.square(self.projected_gravity[:, :2]), dim=1) * -0.1 * self.dt
+
+        reward_torques = torch.sum(torch.square(self.torques), dim=1) * -0.02 * self.dt
+        reward_dof_vel = torch.sum(torch.square(self.dof_vel), dim=1) * -0.02 * self.dt
+        reward_dof_acc = torch.sum(torch.square((self.last_dof_vel - self.dof_vel) / self.dt), dim=1) * -0.02 * self.dt
+        reward_action_rate = torch.sum(torch.square(self.last_actions - self.actions), dim=1) * -0.01 * self.dt
+        reward_collision = torch.sum(1.*(torch.norm(self.contact_forces[:, self.penalised_contact_indices, :], dim=-1) > 0.1), dim=1) * -1. * self.dt
+
         lin_vel_error = torch.sum(torch.square(self.commands[:, :2] - self.base_lin_vel[:, :2]), dim=1)
+        reward_tracking_lin_vel = torch.exp(-lin_vel_error/0.25) * 2.0 * self.dt
+
         ang_vel_error = torch.square(self.commands[:, 2] - self.base_ang_vel[:, 2])
-        rew_lin_vel_xy = torch.exp(-lin_vel_error/0.25) * self.rew_scales["lin_vel_xy"]
-        rew_ang_vel_z = torch.exp(-ang_vel_error/0.25) * self.rew_scales["ang_vel_z"]
+        reward_tracking_ang_vel = torch.exp(-ang_vel_error/0.25) * 0.5 * self.dt
 
-        # other base velocity penalties
-        rew_lin_vel_z = torch.square(self.base_lin_vel[:, 2]) * self.rew_scales["lin_vel_z"]
-        rew_ang_vel_xy = torch.sum(torch.square(self.base_ang_vel[:, :2]), dim=1) * self.rew_scales["ang_vel_xy"]
+        reward_stumble = torch.any(torch.norm(self.contact_forces[:, self.feet_indices, :2], dim=2) >\
+             5 *torch.abs(self.contact_forces[:, self.feet_indices, 2]), dim=1) * 0. * self.dt
+        
+        reward_stand_still = torch.sum(torch.abs(self.dof_pos - self.default_dof_pos), dim=1) * (torch.norm(self.commands[:, :2], dim=1) < 0.1) * -0.1 * self.dt
 
-        # orientation penalty
-        rew_orient = torch.sum(torch.square(self.projected_gravity[:, :2]), dim=1) * self.rew_scales["orient"]
 
-        # base height penalty
-        rew_base_height = torch.square(self.root_states[:, 2] - 0.52) * self.rew_scales["base_height"] # TODO add target base height to cfg
 
-        # torque penalty
-        rew_torque = torch.sum(torch.square(self.torques), dim=1) * self.rew_scales["torque"]
+        contact = self.contact_forces[:, self.feet_indices, 2] > 1.
+        contact_filt = torch.logical_or(contact, self.last_contacts) 
+        self.last_contacts = contact
+        first_contact = (self.feet_air_time > 0.) * contact_filt
+        self.feet_air_time += self.dt
+        rew_airTime = torch.sum((self.feet_air_time - 0.5) * first_contact, dim=1) # reward only on first contact with the ground
+        rew_airTime *= torch.norm(self.commands[:, :2], dim=1) > 0.1 #no reward for zero command
+        self.feet_air_time *= ~contact_filt
 
-        # joint acc penalty
-        rew_joint_acc = torch.sum(torch.square(self.last_dof_vel - self.dof_vel), dim=1) * self.rew_scales["joint_acc"]
+        reward_feet_air_time = torch.sum(self.feet_air_time, dim = 1) * self.dt
 
-        # collision penalty
-        knee_contact = torch.norm(self.contact_forces[:, self.knee_indices, :], dim=2) > 1.
-        rew_collision = torch.sum(knee_contact, dim=1) * self.rew_scales["collision"] # sum vs any ?
+        self.rew_buf = reward_lin_vel_z + reward_ang_vel_xy + reward_orientation + reward_torques + reward_dof_vel\
+                        + reward_dof_acc + reward_action_rate + reward_collision + reward_tracking_lin_vel + reward_tracking_ang_vel +\
+                        reward_stumble + reward_stand_still + reward_feet_air_time
 
-        # stumbling penalty
-        stumble = (torch.norm(self.contact_forces[:, self.feet_indices, :2], dim=2) > 5.) * (torch.abs(self.contact_forces[:, self.feet_indices, 2]) < 1.)
-        rew_stumble = torch.sum(stumble, dim=1) * self.rew_scales["stumble"]
+        self.rew_buf[:] = torch.clip(self.rew_buf[:], min=0.)
 
-        # action rate penalty
-        rew_action_rate = torch.sum(torch.square(self.last_actions - self.actions), dim=1) * self.rew_scales["action_rate"]
 
-        # cosmetic penalty for hip motion
-        rew_hip = torch.sum(torch.abs(self.dof_pos[:, [0, 3, 6, 9]] - self.default_dof_pos[:, [0, 3, 6, 9]]), dim=1)* self.rew_scales["hip"]
-
-        # total reward
-        self.rew_buf = rew_lin_vel_xy + rew_ang_vel_z + rew_lin_vel_z + rew_ang_vel_xy + rew_orient + rew_base_height +\
-                    rew_torque + rew_joint_acc + rew_collision + rew_action_rate + rew_hip + rew_stumble
-        self.rew_buf = torch.clip(self.rew_buf, min=0., max=None)
-
-        # add termination reward
-        self.rew_buf += self.rew_scales["termination"] * self.reset_buf * ~self.timeout_buf
-    
     def compute_observations(self):
-        self.gym.refresh_dof_state_tensor(self.sim)  # done in step
-        self.gym.refresh_actor_root_state_tensor(self.sim)
-        self.gym.refresh_net_contact_force_tensor(self.sim)
-        self.gym.refresh_dof_force_tensor(self.sim)
         
         # Automatic updates due to pointer mapping mechanism
         base_quat = self.root_states[:, 3:7]
@@ -293,26 +309,23 @@ class Go2(VecTask):
         base_ang_vel = quat_rotate_inverse(base_quat, self.root_states[:, 10:13]) * self.ang_vel_scale
         projected_gravity = quat_rotate(base_quat, self.gravity_vec)
         dof_pos_scaled = (self.dof_pos - self.default_dof_pos) * self.dof_pos_scale
-
         commands_scaled = self.commands*torch.tensor([self.lin_vel_scale, self.lin_vel_scale, self.ang_vel_scale], requires_grad=False, device=self.commands.device)
 
-        self.obs_buf[:] = torch.cat((base_lin_vel,
-                        base_ang_vel,
-                        projected_gravity,
-                        commands_scaled,
-                        dof_pos_scaled,
-                        self.dof_vel*self.dof_vel_scale,
-                        self.actions
-                        ), dim=-1)
+        self.obs_buf = torch.cat((  base_lin_vel,
+                                    base_ang_vel,
+                                    projected_gravity,
+                                    commands_scaled,
+                                    dof_pos_scaled,
+                                    self.dof_vel * 0.05,
+                                    self.actions,
+
+                                    ),dim=-1)
 
     # call in init and post_physics_step
     def reset_idx(self, env_ids):
-        # Randomization can happen only at reset time, since it can reset actor positions on GPU
-        if self.randomize:
-            self.apply_randomizations(self.randomization_params)
 
-        positions_offset = torch_rand_float(0.5, 1.5, (len(env_ids), self.num_dof), device=self.device)
-        velocities = torch_rand_float(-0.1, 0.1, (len(env_ids), self.num_dof), device=self.device)
+        positions_offset = torch_rand_float(0.5, 1.5, (len(env_ids), self.num_dofs), device=self.device)
+        velocities = torch_rand_float(-0.1, 0.1, (len(env_ids), self.num_dofs), device=self.device)
 
         self.dof_pos[env_ids] = self.default_dof_pos[env_ids] * positions_offset
         self.dof_vel[env_ids] = velocities
@@ -333,9 +346,6 @@ class Go2(VecTask):
 
         self.progress_buf[env_ids] = 0
         self.reset_buf[env_ids] = 1
-
-
-
 
 
 class Cus_Terrain:
