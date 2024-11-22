@@ -35,4 +35,3 @@ dependencies:
       - python-dateutil==2.9.0.post0
       - requests==2.32.3
       - six==1.16.0
-prefix: /home/vieira/anaconda3/envs/ME5418_group23

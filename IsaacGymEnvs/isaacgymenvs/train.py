@@ -1,12 +1,10 @@
 from datetime import datetime
 
-# Hydra 和 omegaconf 导入
 import hydra
 from omegaconf import DictConfig
 from hydra.utils import to_absolute_path
 
-# Isaac Gym 相关导入
-import isaacgym
+import isaacgym # must import isaacgym before pytorch
 import isaacgymenvs
 import gym
 from isaacgymenvs.tasks import isaacgym_task_map
@@ -17,7 +15,6 @@ from isaacgymenvs.utils.rlgames_utils import (
     MultiObserver,
 )
 
-# rl_games 库导入
 from rl_games.common import env_configurations, vecenv
 from rl_games.torch_runner import Runner
 from rl_games.algos_torch import model_builder, a2c_continuous
@@ -25,7 +22,7 @@ from rl_games.algos_torch import network_builder
 from rl_games.algos_torch import models
 
 @hydra.main(version_base="1.1", config_name="config", config_path="./cfg")
-def test(cfg: DictConfig):
+def initialize_and_run_rl(cfg: DictConfig):
 
     time_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     run_name = f"train_{time_str}"
@@ -70,7 +67,6 @@ def test(cfg: DictConfig):
         runner = Runner(algo_observer)
 
         runner.algo_factory.register_builder('a2c_continuous', lambda **kwargs : a2c_continuous.A2CAgent(**kwargs))
-        runner.player_factory.register_builder('a2c_continuous', lambda **kwargs : a2c_continuous.A2CAgent(**kwargs))
         
         model_builder.register_model('continuous_a2c',lambda network, **kwargs: models.ModelA2CContinuous(network))
         model_builder.register_model('continuous_a2c_logstd',lambda network, **kwargs: models.ModelA2CContinuousLogStd(network))
@@ -97,4 +93,4 @@ def test(cfg: DictConfig):
 
 
 if __name__ == "__main__":
-    test()
+    initialize_and_run_rl()

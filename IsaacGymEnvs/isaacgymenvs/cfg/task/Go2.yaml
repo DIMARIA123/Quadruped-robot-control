@@ -32,9 +32,9 @@ env:
   # PD control parameters, including stiffness, damping, action scaling, and control frequency.
   control:
     # PD Drive parameters:
-    stiffness: 85.0  # [N*m/rad]
+    stiffness: 50.0  # [N*m/rad]
     damping: 2.0     # [N*m*s/rad]
-    actionScale: 0.5
+    actionScale: 0.25
     controlFrequencyInv: 1 # 50HZ
 
   # Default joint angles of the robot, used for initial posture.
@@ -62,24 +62,20 @@ env:
 
   # Learning Configuration
   learn:
-    allowKneeContacts: False
     # rewards
     terminalReward: 0.0
-    linearVelocityXYRewardScale: 1.0
-    linearVelocityZRewardScale: -4.0
-    angularVelocityXYRewardScale: -0.05
-    angularVelocityZRewardScale: 0.5
-    orientationRewardScale: -0. #-1.
-    torqueRewardScale: -0.00002 # -0.000025
-    jointAccRewardScale: -0.0005 # -0.0025
-    baseHeightRewardScale: -0.0 #5
-    feetAirTimeRewardScale:  1.0
-    kneeCollisionRewardScale: -0.25 
-    feetStumbleRewardScale: -0. #-2.0
-    actionRateRewardScale: -0.01
-
-    # cosmetics
-    hipRewardScale: -0. #25
+    lin_vel_z: -0.01
+    ang_vel_xy: -0.01
+    orientation: -0.1
+    torques: -0.02
+    dof_vel: -0.002
+    dof_acc: -2.5e-7
+    action_rate: -0.5
+    collision: -1.0
+    stand_still: -0.1
+    tracking_lin_vel: 20.0
+    tracking_ang_vel: 5.0
+    feet_air_time: 1.0
 
     # normalization
     linearVelocityScale: 2.0
@@ -89,9 +85,6 @@ env:
 
     # episode length in seconds
     episodeLength_s: 50
-
-  # set to True if you use camera sensors in the environment
-  enableCameraSensors: False
 
 # Simulation Configuration
 sim:
@@ -111,4 +104,4 @@ sim:
     bounce_threshold_velocity: 0.2
     default_buffer_size_multiplier: 5.0
     num_subscenes: 4
-    contact_collection: 1 # 0: CC_NEVER (don't collect contact info), 1: CC_LAST_SUBSTEP (collect only contacts on last substep), 2: CC_ALL_SUBSTEPS (broken - do not use!)
+    contact_collection: 1

@@ -23,7 +23,6 @@ class Go2(VecTask):
 
         super().__init__(config=self.cfg, rl_device=rl_device, sim_device=sim_device, graphics_device_id=graphics_device_id, headless=headless, virtual_screen_capture=virtual_screen_capture, force_render=force_render)
         
-        self.last_contacts = torch.zeros(self.num_envs, len(self.feet_indices), dtype=torch.bool, device=self.device, requires_grad=False)
         
         # normalization
         self.lin_vel_scale = self.cfg["env"]["learn"]["linearVelocityScale"]
@@ -34,20 +33,19 @@ class Go2(VecTask):
 
         # reward scales
         self.rew_scales = {}
-        self.rew_scales["termination"] = self.cfg["env"]["learn"]["terminalReward"] 
-        self.rew_scales["lin_vel_xy"] = self.cfg["env"]["learn"]["linearVelocityXYRewardScale"] 
-        self.rew_scales["lin_vel_z"] = self.cfg["env"]["learn"]["linearVelocityZRewardScale"] 
-        self.rew_scales["ang_vel_z"] = self.cfg["env"]["learn"]["angularVelocityZRewardScale"] 
-        self.rew_scales["ang_vel_xy"] = self.cfg["env"]["learn"]["angularVelocityXYRewardScale"] 
-        self.rew_scales["orient"] = self.cfg["env"]["learn"]["orientationRewardScale"] 
-        self.rew_scales["torque"] = self.cfg["env"]["learn"]["torqueRewardScale"]
-        self.rew_scales["joint_acc"] = self.cfg["env"]["learn"]["jointAccRewardScale"]
-        self.rew_scales["base_height"] = self.cfg["env"]["learn"]["baseHeightRewardScale"]
-        self.rew_scales["air_time"] = self.cfg["env"]["learn"]["feetAirTimeRewardScale"]
-        self.rew_scales["collision"] = self.cfg["env"]["learn"]["kneeCollisionRewardScale"]
-        self.rew_scales["stumble"] = self.cfg["env"]["learn"]["feetStumbleRewardScale"]
-        self.rew_scales["action_rate"] = self.cfg["env"]["learn"]["actionRateRewardScale"]
-        self.rew_scales["hip"] = self.cfg["env"]["learn"]["hipRewardScale"]
+        self.rew_scales["terminalReward"] = self.cfg["env"]["learn"]["terminalReward"] 
+        self.rew_scales["lin_vel_z"] = self.cfg["env"]["learn"]["lin_vel_z"] 
+        self.rew_scales["ang_vel_xy"] = self.cfg["env"]["learn"]["ang_vel_xy"] 
+        self.rew_scales["orientation"] = self.cfg["env"]["learn"]["orientation"] 
+        self.rew_scales["torques"] = self.cfg["env"]["learn"]["torques"] 
+        self.rew_scales["dof_vel"] = self.cfg["env"]["learn"]["dof_vel"] 
+        self.rew_scales["dof_acc"] = self.cfg["env"]["learn"]["dof_acc"]
+        self.rew_scales["action_rate"] = self.cfg["env"]["learn"]["action_rate"]
+        self.rew_scales["collision"] = self.cfg["env"]["learn"]["collision"]
+        self.rew_scales["stand_still"] = self.cfg["env"]["learn"]["stand_still"]
+        self.rew_scales["tracking_lin_vel"] = self.cfg["env"]["learn"]["tracking_lin_vel"]
+        self.rew_scales["tracking_ang_vel"] = self.cfg["env"]["learn"]["tracking_ang_vel"]
+        self.rew_scales["feet_air_time"] = self.cfg["env"]["learn"]["feet_air_time"]
 
         # command ranges
         self.command_x_range = self.cfg["env"]["randomCommandVelocityRanges"]["linear_x"]
@@ -58,7 +56,6 @@ class Go2(VecTask):
         self.dt = self.sim_params.dt
         self.max_episode_length_s = self.cfg["env"]["learn"]["episodeLength_s"]
         self.max_episode_length = int(self.max_episode_length_s / self.dt + 0.5)
-        self.allow_knee_contacts = self.cfg["env"]["learn"]["allowKneeContacts"] # Whether Allow Knee Contact with the Ground
         self.Kp = self.cfg["env"]["control"]["stiffness"]
         self.Kd = self.cfg["env"]["control"]["damping"]
         
@@ -84,14 +81,12 @@ class Go2(VecTask):
         self.dof_pos = self.dof_state.view(self.num_envs, self.num_dofs, 2)[..., 0]
         self.dof_vel = self.dof_state.view(self.num_envs, self.num_dofs, 2)[..., 1]
 
+        self.last_contacts = torch.zeros(self.num_envs, len(self.feet_indices), dtype=torch.bool, device=self.device, requires_grad=False)
         self.last_actions = torch.zeros(self.num_envs, self.num_actions, dtype=torch.float, device=self.device, requires_grad=False)
         self.feet_air_time = torch.zeros(self.num_envs, 4, dtype=torch.float, device=self.device, requires_grad=False)
         self.last_dof_vel = torch.zeros_like(self.dof_vel)
 
         self.commands = torch.zeros(self.num_envs, 3, dtype=torch.float, device=self.device, requires_grad=False)
-        self.commands_y = self.commands[..., 1]
-        self.commands_x = self.commands[..., 0]
-        self.commands_yaw = self.commands[..., 2]
         self.default_dof_pos = torch.zeros_like(self.dof_pos, dtype=torch.float, device=self.device, requires_grad=False)
 
         for i in range(self.cfg["env"]["numActions"]):
@@ -118,8 +113,8 @@ class Go2(VecTask):
 
     def pre_physics_step(self, actions):
         self.actions = actions.clone().to(self.device)
-        actions_scaled = actions * 0.25
-        self.action_torques = 50.*(actions_scaled + self.default_dof_pos - self.dof_pos) - 2.*self.dof_vel
+        actions_scaled = actions * self.action_scale
+        self.action_torques = self.Kp *(actions_scaled + self.default_dof_pos - self.dof_pos) - self.Kd*self.dof_vel
         self.gym.set_dof_actuation_force_tensor(self.sim, gymtorch.unwrap_tensor(self.action_torques))
 
     def post_physics_step(self):
@@ -188,7 +183,6 @@ class Go2(VecTask):
             dof_props['stiffness'][i] = self.cfg["env"]["control"]["stiffness"] #self.Kp
             dof_props['damping'][i] = self.cfg["env"]["control"]["damping"] #self.Kd
         
-
         self.dof_pos_limits = torch.zeros(self.num_dofs, 2, dtype=torch.float, device=self.device, requires_grad=False)
         self.dof_vel_limits = torch.zeros(self.num_dofs, dtype=torch.float, device=self.device, requires_grad=False)
         self.torque_limits = torch.zeros(self.num_dofs, dtype=torch.float, device=self.device, requires_grad=False)
@@ -228,8 +222,6 @@ class Go2(VecTask):
             self.envs.append(env_handle)
             self.actor_handles.append(actor_handle)
 
-
-
         penalize_contacts_on = ["thigh", "calf"]
         penalized_contact_names = []
         for name in penalize_contacts_on:
@@ -260,28 +252,23 @@ class Go2(VecTask):
     def compute_reward(self):
 
         self.rew_buf[:] = 0.
-        reward_lin_vel_z = torch.square(self.base_lin_vel[:, 2]) * -0.01 * self.dt
-        reward_ang_vel_xy = torch.sum(torch.square(self.base_ang_vel[:, :2]), dim=1) * -0.01 * self.dt
-        reward_orientation = torch.sum(torch.square(self.projected_gravity[:, :2]), dim=1) * -0.1 * self.dt
+        reward_lin_vel_z = torch.square(self.base_lin_vel[:, 2]) * self.rew_scales["lin_vel_z"]
+        reward_ang_vel_xy = torch.sum(torch.square(self.base_ang_vel[:, :2]), dim=1) * self.rew_scales["ang_vel_xy"]
+        reward_orientation = torch.sum(torch.square(self.projected_gravity[:, :2]), dim=1) * self.rew_scales["orientation"]
 
-        reward_torques = torch.sum(torch.square(self.torques), dim=1) * -0.02 * self.dt
-        reward_dof_vel = torch.sum(torch.square(self.dof_vel), dim=1) * -0.02 * self.dt
-        reward_dof_acc = torch.sum(torch.square((self.last_dof_vel - self.dof_vel) / self.dt), dim=1) * -0.02 * self.dt
-        reward_action_rate = torch.sum(torch.square(self.last_actions - self.actions), dim=1) * -0.01 * self.dt
-        reward_collision = torch.sum(1.*(torch.norm(self.contact_forces[:, self.penalised_contact_indices, :], dim=-1) > 0.1), dim=1) * -1. * self.dt
+        reward_torques = torch.sum(torch.square(self.torques), dim=1) * self.rew_scales["torques"]
+        reward_dof_vel = torch.sum(torch.square(self.dof_vel), dim=1) * self.rew_scales["dof_vel"]
+        reward_dof_acc = torch.sum(torch.square((self.last_dof_vel - self.dof_vel) / self.dt), dim=1) * self.rew_scales["dof_acc"]
+        reward_action_rate = torch.sum(torch.square(self.last_actions - self.actions), dim=1) * self.rew_scales["action_rate"]
+        reward_collision = torch.sum(1.*(torch.norm(self.contact_forces[:, self.penalised_contact_indices, :], dim=-1) > 0.1), dim=1) * self.rew_scales["collision"]
 
         lin_vel_error = torch.sum(torch.square(self.commands[:, :2] - self.base_lin_vel[:, :2]), dim=1)
-        reward_tracking_lin_vel = torch.exp(-lin_vel_error/0.25) * 2.0 * self.dt
+        reward_tracking_lin_vel = torch.exp(-lin_vel_error/0.25) * self.rew_scales["tracking_lin_vel"]
 
         ang_vel_error = torch.square(self.commands[:, 2] - self.base_ang_vel[:, 2])
-        reward_tracking_ang_vel = torch.exp(-ang_vel_error/0.25) * 0.5 * self.dt
-
-        reward_stumble = torch.any(torch.norm(self.contact_forces[:, self.feet_indices, :2], dim=2) >\
-             5 *torch.abs(self.contact_forces[:, self.feet_indices, 2]), dim=1) * 0. * self.dt
+        reward_tracking_ang_vel = torch.exp(-ang_vel_error/0.25) * self.rew_scales["tracking_ang_vel"]
         
-        reward_stand_still = torch.sum(torch.abs(self.dof_pos - self.default_dof_pos), dim=1) * (torch.norm(self.commands[:, :2], dim=1) < 0.1) * -0.1 * self.dt
-
-
+        reward_stand_still = torch.sum(torch.abs(self.dof_pos - self.default_dof_pos), dim=1) * (torch.norm(self.commands[:, :2], dim=1) < 0.1) * self.rew_scales["stand_still"]
 
         contact = self.contact_forces[:, self.feet_indices, 2] > 1.
         contact_filt = torch.logical_or(contact, self.last_contacts) 
@@ -292,14 +279,40 @@ class Go2(VecTask):
         rew_airTime *= torch.norm(self.commands[:, :2], dim=1) > 0.1 #no reward for zero command
         self.feet_air_time *= ~contact_filt
 
-        reward_feet_air_time = torch.sum(self.feet_air_time, dim = 1) * self.dt
+        reward_feet_air_time = torch.sum(self.feet_air_time, dim = 1) * self.rew_scales["feet_air_time"]
 
-        self.rew_buf = reward_lin_vel_z + reward_ang_vel_xy + reward_orientation + reward_torques + reward_dof_vel\
-                        + reward_dof_acc + reward_action_rate + reward_collision + reward_tracking_lin_vel + reward_tracking_ang_vel +\
-                        reward_stumble + reward_stand_still + reward_feet_air_time
+
+        self.rew_buf = (
+            reward_lin_vel_z +
+            reward_tracking_lin_vel +
+            reward_ang_vel_xy +
+            reward_tracking_ang_vel +
+            reward_orientation +
+            reward_torques +
+            reward_dof_vel +
+            reward_dof_acc +
+            reward_action_rate +
+            reward_collision +
+            reward_stand_still +
+            reward_feet_air_time
+        )
 
         self.rew_buf[:] = torch.clip(self.rew_buf[:], min=0.)
 
+        print(f"Reward lin_vel_z: {reward_lin_vel_z.mean().item():.4f}")
+        print(f"Reward ang_vel_xy: {reward_ang_vel_xy.mean().item():.4f}")
+        print(f"Reward orientation: {reward_orientation.mean().item():.4f}")
+        print(f"Reward torques: {reward_torques.mean().item():.4f}")
+        print(f"Reward dof_vel: {reward_dof_vel.mean().item():.4f}")
+        print(f"Reward dof_acc: {reward_dof_acc.mean().item():.4f}")
+        print(f"Reward action_rate: {reward_action_rate.mean().item():.4f}")
+        print(f"Reward collision: {reward_collision.mean().item():.4f}")
+        print(f"Reward tracking_lin_vel: {reward_tracking_lin_vel.mean().item():.4f}")
+        print(f"Reward tracking_ang_vel: {reward_tracking_ang_vel.mean().item():.4f}")
+        print(f"Reward stand_still: {reward_stand_still.mean().item():.4f}")
+        print(f"Reward feet_air_time: {reward_feet_air_time.mean().item():.4f}")
+        print(f"Total reward: {self.rew_buf.mean().item():.4f}")
+        print("-" * 50) 
 
     def compute_observations(self):
         
@@ -316,7 +329,7 @@ class Go2(VecTask):
                                     projected_gravity,
                                     commands_scaled,
                                     dof_pos_scaled,
-                                    self.dof_vel * 0.05,
+                                    self.dof_vel * self.dof_vel_scale,
                                     self.actions,
 
                                     ),dim=-1)
@@ -339,10 +352,6 @@ class Go2(VecTask):
         self.gym.set_dof_state_tensor_indexed(self.sim,
                                               gymtorch.unwrap_tensor(self.dof_state),
                                               gymtorch.unwrap_tensor(env_ids_int32), len(env_ids_int32))
-
-        self.commands_x[env_ids] = torch_rand_float(self.command_x_range[0], self.command_x_range[1], (len(env_ids), 1), device=self.device).squeeze()
-        self.commands_y[env_ids] = torch_rand_float(self.command_y_range[0], self.command_y_range[1], (len(env_ids), 1), device=self.device).squeeze()
-        self.commands_yaw[env_ids] = torch_rand_float(self.command_yaw_range[0], self.command_yaw_range[1], (len(env_ids), 1), device=self.device).squeeze()
 
         self.progress_buf[env_ids] = 0
         self.reset_buf[env_ids] = 1

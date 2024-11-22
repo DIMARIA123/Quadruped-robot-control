@@ -22,9 +22,9 @@ graphics_device_id: 0
 
 # RLGames Arguments
 # test - if set, run policy in inference mode (requires setting checkpoint to load)
-test: False
+test: Ture
 # used to set checkpoint path
-checkpoint: ''
+checkpoint: '/home/vieira/isaacgym-project/ME5418_Finalproject/IsaacGymEnvs/isaacgymenvs/outputs1/2024-11-22/14-50-23/runs/1/nn/last_1_ep_250_rew_8583.085.pth'
 # Set the standard deviation for exploration noise; leave empty to disable noise
 sigma: ''
 # set to True to use multi-gpu training
