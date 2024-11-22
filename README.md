@@ -39,7 +39,7 @@ The current environment is set up using IsaacGymEnv, and training is conducted w
 The training can be run with the following command:
    ```bash
    cd IsaacGymEnvs/isaacgymenvs
-   python custrain.py
+   python train.py
    ```
 IsaacGymEnv uses the Hydra library for parameter configuration, and to maintain consistency, this project also utilizes Hydra for parameter management. The top-level configuration file is located at 
 * IsaacGymEnvs/isaacgymenvs/cfg/cusconfig.yaml. 
